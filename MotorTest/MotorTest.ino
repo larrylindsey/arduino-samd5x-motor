@@ -9,73 +9,96 @@ For use with the Adafruit Motor Shield v2
 
 #include <Wire.h>
 #include <Adafruit_MotorShield.h>
+#include <QuadratureEncoder.h>
+#include <PID_v1.h>
 
-// Create the motor shield object with the default I2C address
-Adafruit_MotorShield AFMS = Adafruit_MotorShield(); 
-// Or, create it with a different I2C address (say for stacking)
-// Adafruit_MotorShield AFMS = Adafruit_MotorShield(0x61); 
-
-// Select which 'port' M1, M2, M3 or M4. In this case, M1
-Adafruit_DCMotor *myMotor = AFMS.getMotor(1);
-// You can also make another motor on port M2
-//Adafruit_DCMotor *myOtherMotor = AFMS.getMotor(2);
-
-// setup input pot for velocity/position
-int pot_center;
 #define SPEED_MAX 255
 
-#include <QuadratureEncoder.h>
-// Max number of Encoders object you can create is 4. This example only uses 2.
 
-Encoders encoder(2,3);  // Create an Encoder object named encoder, using digitalpin 2 & 3
-long encoderCount_prev;
+class PIDControl {
+ public:
 
+  PIDControl(int pin_a, int pin_b, int motor) : afms_(Adafruit_MotorShield()), encoder_(Encoders(pin_a, pin_b)) {
+    afms_.begin();
+    motor_ = afms_.getMotor(motor);    
+    previous_count_ = encoder_.getEncoderCount();
+
+    motor_->setSpeed(0);
+    motor_->run(FORWARD);
+    motor_->run(RELEASE);
+  }
+
+  void update() {
+    motorVelocity_(target_velocity_);
+  }
+
+  void setVelocity(int velocity) {
+    target_velocity_ = velocity;
+  }
+
+  void motorVelocity_(int velocity) {
+    if (velocity == last_motor_velocity_) {
+      return;
+    }
+
+    last_motor_velocity_ = velocity;
+
+    if (velocity > 0) {
+      motor_->run(FORWARD);
+      motor_->setSpeed(abs(velocity));
+    } else if (velocity < 0) {
+      motor_->run(BACKWARD);
+      motor_->setSpeed(abs(velocity));  
+    } else {
+      motor_->run(RELEASE);
+    }
+  }
+
+ private: 
+  Adafruit_MotorShield afms_;
+  Encoders encoder_;
+  
+  Adafruit_DCMotor* motor_;
+  long previous_count_;
+  
+  int target_velocity_;
+  int last_motor_velocity_;
+};
+
+PIDControl* g_PIDControl;
 
 void setup() {
   Serial.begin(115200);           // set up Serial library at 9600 bps
   Serial.println("Adafruit Motorshield v2 - DC Motor test!");
-
-  AFMS.begin();  // create with the default frequency 1.6KHz
-  //AFMS.begin(1000);  // OR with a different frequency, say 1KHz
-
-  pot_center = analogRead(0);
-  encoderCount_prev = encoder.getEncoderCount();
-
-  // Set the speed to start, from 0 (off) to 255 (max speed)
-  myMotor->setSpeed(0);
-  myMotor->run(FORWARD);
-  // turn on motor
-  myMotor->run(RELEASE);
+  
+  g_PIDControl = new PIDControl(2, 3, 1);
 }
 
 
 void loop() {
-  int pot = analogRead(0);
-  int speed = constrain(pot - pot_center, -SPEED_MAX, SPEED_MAX);
-
-  if (speed > 0) {
-    myMotor->run(FORWARD);
-    myMotor->setSpeed(abs(speed));  
-  } else if (speed < 0) {
-    myMotor->run(BACKWARD);
-    myMotor->setSpeed(abs(speed));  
+  int v;
+  if (millis() < 5000) {
+    v = 255;
   } else {
-    myMotor->run(RELEASE);
+    v = 0;
   }
 
-  long encoderCount = encoder.getEncoderCount();
-  int velocity = encoderCount - encoderCount_prev;
-  encoderCount_prev = encoderCount;
-
-  Serial.print("pot=");
-  Serial.print(pot);
-  Serial.print(" speed=");
-  Serial.print(speed);
+  g_PIDControl->setVelocity(v);
+  g_PIDControl->update();
   
-  Serial.print(" pos=");
-  Serial.print(encoderCount);
-  Serial.print(" vel=");
-  Serial.println(velocity);
+//  long encoderCount = encoder.getEncoderCount();
+//  int velocity = encoderCount - encoderCount_prev;
+//  encoderCount_prev = encoderCount;
+
+//  Serial.print("pot=");
+//  Serial.print(pot);
+//  Serial.print(" speed=");
+//  Serial.print(speed);
+//  
+//  Serial.print(" pos=");
+//  Serial.print(encoderCount);
+//  Serial.print(" vel=");
+//  Serial.println(velocity);
 
   delay(200);
 }
