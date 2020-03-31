@@ -32,6 +32,7 @@ class PIDControl {
     pid_ =
         new PID(&pid_input_, &pid_output_, &pid_setpoint_, kp, ki, kd, DIRECT);
     pid_->SetMode(AUTOMATIC);
+    pid_->SetOutputLimits(-1024, 1024);
 
     previous_count_ = encoder_.getEncoderCount();
     previous_time_ = micros();
@@ -41,46 +42,41 @@ class PIDControl {
     pid_setpoint_ = 0;
   }
 
-
   void update() {
     long current_count = encoder_.getEncoderCount();
-    long current_time = micros();
-    float time_delta = float(current_time - previous_time_) / 1000000.0;
-    float measured_velocity = float(current_count - previous_count_) /
-                              count_per_revolution_ / time_delta;
-    previous_count_ = current_count;
-    previous_time_ = current_time;
-
-    pid_setpoint_ = target_velocity_;
-    pid_input_ = measured_velocity;
+    pid_setpoint_ = target_position_;
+    pid_input_ = current_count;
 
     pid_->Compute();
 
     if (stop_) {
-      motorVelocity_(0);
+      setMotorVelocity(0);
       return;
     }
 
-    int control_velocity = int(pid_output_ / V_MAX_REV_PER_S * 255);
-    if (control_velocity < 0) control_velocity = 0;
-    if (control_velocity > 255) control_velocity = 255;
-    motorVelocity_(control_velocity);
+    setMotorVelocity(int(pid_output_));
   }
 
   void print() {
-    Serial.print(", Input ");
+    Serial.print("Input ");
     Serial.print(pid_input_);
     Serial.print(", Output ");
     Serial.print(pid_output_);
     Serial.print(", Setpoint ");
-    Serial.println(pid_setpoint_);
+    Serial.print(pid_setpoint_);
+    Serial.print(", ControlOutput ");
+    Serial.println(last_motor_velocity_);
   }
 
-  void setVelocity(float velocity) { target_velocity_ = velocity; }
+  void setPosition(float position) { target_position_ = position; }
 
   void stop() { stop_ = true; }
 
-  void motorVelocity_(int velocity) {
+ private:
+  void setMotorVelocity(int velocity) {
+    if (velocity < -255) velocity = -255;
+    if (velocity > 255) velocity = 255;
+
     if (velocity == last_motor_velocity_) {
       return;
     }
@@ -98,7 +94,6 @@ class PIDControl {
     }
   }
 
- private:
   Adafruit_MotorShield afms_;
   Encoders encoder_;
   bool stop_;
@@ -109,7 +104,7 @@ class PIDControl {
   long previous_count_;
   long previous_time_;
 
-  float target_velocity_;
+  float target_position_;
   int last_motor_velocity_;
 
   double pid_input_, pid_output_, pid_setpoint_;
@@ -132,28 +127,37 @@ PIDControl* pessen_pid(int pin_a, int pin_b, int motor, float ku, float tu) {
   return new PIDControl(pin_a, pin_b, motor, ENCODER_COUNT_PER_REV, kp, ki, kd);
 }
 
+PIDControl* damped_pid(int pin_a, int pin_b, int motor, float ku, float tu) {
+  float kp = ku * 0.2;
+  float ki = 0.4 * ku / tu;
+  float kd = ku * tu / 15.0;
+  return new PIDControl(pin_a, pin_b, motor, ENCODER_COUNT_PER_REV, kp, ki, kd);
+}
+
 void setup() {
   Serial.begin(115200);
-  g_PIDControl = pessen_pid(2, 3, 1, 0.6, 0.25);
+  g_PIDControl = damped_pid(2, 3, 1, 3.2, 0.12);
+  g_PIDControl =
+      new PIDControl(2, 3, 1, ENCODER_COUNT_PER_REV, .6f, 10.0f, 0.00f);
   delay(2000);
 }
 
 void loop() {
-  float v;
+  float p;
   if (millis() < 5000) {
-    v = 1.0;
+    p = -4800;
   } else if (millis() < 10000) {
-    v = 0.5;
+    p = 4800;
   }
 
   if (millis() > 15000) {
     g_PIDControl->stop();
+    g_PIDControl->update();
+  } else {
+    g_PIDControl->setPosition(p);
+    g_PIDControl->update();
+    g_PIDControl->print();
   }
-
-  g_PIDControl->setVelocity(v);
-  g_PIDControl->update();
-  g_PIDControl->print();
-
   while (micros() % 10000 > 0) {
   }
 }
